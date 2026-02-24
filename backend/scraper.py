@@ -3,76 +3,55 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import json
 import re
+import asyncio
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 
 class AnthropicScraper:
-    """Anthropic 博客爬虫"""
+    """Anthropic 博客爬虫 - 简化版"""
     
     def __init__(self):
         self.base_url = "https://www.anthropic.com"
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5"
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
         }
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError))
-    )
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def fetch_page(self, url: str) -> Optional[str]:
-        """获取页面内容 - 带重试机制"""
-        try:
-            async with httpx.AsyncClient(headers=self.headers, timeout=30.0) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                return response.text
-        except httpx.HTTPStatusError as e:
-            print(f"HTTP 错误 {url}: {e.response.status_code}")
-            return None
-        except Exception as e:
-            print(f"获取页面失败 {url}: {e}")
-            return None
+        """获取页面内容"""
+        async with httpx.AsyncClient(headers=self.headers, timeout=30.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.text
     
     async def scrape_engineering(self) -> List[Dict]:
-        """爬取 Engineering 博客 - 从页面提取文章列表"""
+        """爬取 Engineering 博客"""
         url = f"{self.base_url}/engineering"
         html = await self.fetch_page(url)
         if not html:
             return []
         
         articles = []
+        soup = BeautifulSoup(html, 'html.parser')
         
-        # 从 HTML 中提取文章链接和标题
-        # 查找类似：href="/engineering/article-slug"
-        import re
-        
-        # 匹配文章卡片
-        pattern = r'href="(/engineering/[^"]+)"'
-        matches = re.findall(pattern, html)
-        
-        seen_slugs = set()
-        for slug in matches:
-            if slug in seen_slugs or slug.count('/') > 2:
+        for card in soup.find_all('a', href=re.compile(r'/engineering/[^/]+$'))[:15]:
+            href = card.get('href', '')
+            if not href or href == '/engineering':
                 continue
-            seen_slugs.add(slug)
             
-            # 提取标题（从附近的文本）
-            title_pattern = rf'{re.escape(slug)}[^>]*>([^<]+)'
-            title_match = re.search(title_pattern, html)
-            title = title_match.group(1).strip() if title_match else slug.split('/')[-1].replace('-', ' ').title()
+            title = card.get_text(strip=True)
+            if not title:
+                title = href.split('/')[-1].replace('-', ' ').title()
             
             articles.append({
                 "title": title,
-                "url": f"{self.base_url}{slug}",
+                "url": f"{self.base_url}{href}",
                 "source": "engineering",
                 "published_date": None
             })
         
-        return articles[:15]  # 限制数量
+        return articles
     
     async def scrape_news(self) -> List[Dict]:
         """爬取 News 页面"""
@@ -82,83 +61,76 @@ class AnthropicScraper:
             return []
         
         articles = []
-        import re
+        soup = BeautifulSoup(html, 'html.parser')
         
-        # 匹配新闻链接
-        pattern = r'href="(/news/[^"]+)"'
-        matches = re.findall(pattern, html)
-        
-        seen_slugs = set()
-        for slug in matches:
-            if slug in seen_slugs or slug == '/news':
+        for card in soup.find_all('a', href=re.compile(r'/news/[^/]+$'))[:10]:
+            href = card.get('href', '')
+            if not href or href == '/news':
                 continue
-            seen_slugs.add(slug)
+            
+            title = card.get_text(strip=True)
+            if not title:
+                title = href.split('/')[-1].replace('-', ' ').title()
             
             articles.append({
-                "title": slug.split('/')[-1].replace('-', ' ').title(),
-                "url": f"{self.base_url}{slug}",
+                "title": title,
+                "url": f"{self.base_url}{href}",
                 "source": "news",
                 "published_date": None
             })
         
-        return articles[:10]
+        return articles
     
     async def scrape_article_content(self, url: str) -> Optional[str]:
-        """获取文章 URL（直接返回给模型处理）"""
-        # 不再爬取内容，直接返回 URL
-        # 让大模型自己访问 URL 并总结
-        print(f"  ✓ 准备 URL 让模型访问：{url}")
-        return url
+        """获取文章内容 - 简化版"""
+        html = await self.fetch_page(url)
+        if not html:
+            return None
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # 提取所有段落
+        paragraphs = soup.find_all('p')
+        if paragraphs:
+            content = ' '.join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
+            if len(content) > 100:
+                return content[:3000]
+        
+        # 备用：提取所有文本
+        text = soup.get_text(separator=' ', strip=True)
+        return text[:3000] if len(text) > 200 else None
     
     async def scrape_all(self, months: int = 3) -> List[Dict]:
-        """爬取所有文章 - 带速率限制"""
-        import asyncio
-        
-        all_articles = []
-        
+        """爬取所有文章"""
         print("=" * 60)
         print("开始爬取 Anthropic 博客...")
         print("=" * 60)
         
-        # 爬取 Engineering
-        print("\n[1/2] 爬取 Engineering 博客...")
-        eng_articles = await self.scrape_engineering()
-        print(f"  找到 {len(eng_articles)} 篇文章")
-        all_articles.extend(eng_articles)
+        eng = await self.scrape_engineering()
+        print(f"Engineering: {len(eng)} 篇")
         
-        # 爬取 News
-        print("\n[2/2] 爬取 News 页面...")
-        news_articles = await self.scrape_news()
-        print(f"  找到 {len(news_articles)} 篇文章")
-        all_articles.extend(news_articles)
+        news = await self.scrape_news()
+        print(f"News: {len(news)} 篇")
         
-        # 去重（基于 URL）
-        seen_urls = set()
-        unique_articles = []
-        for article in all_articles:
-            if article['url'] not in seen_urls:
-                seen_urls.add(article['url'])
-                unique_articles.append(article)
+        # 合并去重
+        all_articles = eng + news
+        seen = set()
+        unique = []
+        for a in all_articles:
+            if a['url'] not in seen:
+                seen.add(a['url'])
+                unique.append(a)
         
-        print(f"\n去重后共 {len(unique_articles)} 篇文章")
+        print(f"去重后：{len(unique)} 篇")
+        print("\n获取内容...")
         
-        # 获取详细内容（限制数量避免超时，添加速率限制）
-        print("\n开始获取文章详细内容...")
-        for i, article in enumerate(unique_articles[:10]):
-            # 速率限制：每篇文章间隔 2 秒
+        # 获取内容（带速率限制）
+        for i, article in enumerate(unique[:10]):
             if i > 0:
-                await asyncio.sleep(2)
-            
-            print(f"\n[{i+1}/{min(10, len(unique_articles))}] {article['title'][:60]}...")
+                await asyncio.sleep(1)
             content = await self.scrape_article_content(article['url'])
             article['content'] = content
-            if content:
-                print(f"  ✓ 成功获取内容 ({len(content)} 字符)")
-            else:
-                print(f"  ✗ 内容获取失败")
+            print(f"[{i+1}/10] {article['title'][:50]}... {'✓' if content else '✗'}")
         
         print("\n" + "=" * 60)
-        print(f"爬取完成！共处理 {len(unique_articles)} 篇文章")
-        print("=" * 60)
-        
-        return unique_articles
+        return unique
