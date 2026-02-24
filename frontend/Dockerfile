@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine
 
 WORKDIR /app
 
