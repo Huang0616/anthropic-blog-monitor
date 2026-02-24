@@ -90,41 +90,23 @@ class Summarizer:
         # 截取内容（避免 token 超限）
         truncated_content = content[:3000]
         
-        prompt = f"""请为以下技术文章生成详细的中文摘要（500-800 字）：
+        prompt = f"""请用 200-300 字概括这篇文章的中文摘要：
 
 文章标题：{title}
 
 文章内容：
 {truncated_content}
 
-请按照以下结构输出摘要：
-
-## 核心观点
-用 2-3 句话概括文章的核心思想和主要结论。
-
-## 关键内容
-详细总结文章的主要内容，包括：
-- 技术要点和实现方法
-- 重要发现和实验结果
-- 作者的观点和建议
-
-## 实际价值
-说明这篇文章对读者的实际帮助，例如：
-- 可以应用到什么场景
-- 解决了什么问题
-- 有什么启发意义
-
 要求：
+- 概括核心观点和主要结论
 - 使用专业但易懂的中文
 - 保持原文的技术术语
-- 结构清晰，分段展示
-- 重要信息不要遗漏
-- 总字数控制在 500-800 字之间"""
+- 简洁明了，重点突出"""
 
         try:
             print(f"[{timestamp}] 🤖 正在生成摘要 (请求 #{self.request_count})...")
             
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
                     f"{self.api_config['base_url']}/chat/completions",
                     headers={
