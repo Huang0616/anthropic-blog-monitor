@@ -51,14 +51,16 @@ services:
       dockerfile: Dockerfile
     container_name: anthropic-blog-frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: http://host.docker.internal:8000
     depends_on:
       - backend
     networks:
       - blog-network
     ports:
-      - "3000:3000"
+      - "3002:3000"
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 networks:
   blog-network:
