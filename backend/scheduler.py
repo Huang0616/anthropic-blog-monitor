@@ -26,12 +26,17 @@ class BlogScheduler:
     
     async def scrape_and_process(self):
         """爬取并处理新文章"""
-        print(f"[{datetime.now()}] 开始爬取文章...")
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print("\n" + "=" * 60)
+        print(f"[{timestamp}] 🚀 开始爬取并处理文章...")
+        print("=" * 60)
+        
+        new_count = 0
+        success_count = 0
         
         try:
             # 爬取文章
             articles = await self.scraper.scrape_all(months=3)
-            print(f"爬取到 {len(articles)} 篇文章")
             
             async with self.db_session_factory() as session:
                 for article_data in articles:
@@ -42,7 +47,10 @@ class BlogScheduler:
                     existing = result.scalar_one_or_none()
                     
                     if existing:
+                        print(f"⏭️  跳过已存在：{article_data['title'][:50]}...")
                         continue  # 已存在，跳过
+                    
+                    new_count += 1
                     
                     # 生成摘要
                     summary = await self.summarizer.summarize(
@@ -61,24 +69,37 @@ class BlogScheduler:
                     )
                     
                     session.add(new_article)
-                    print(f"添加新文章：{new_article.title}")
+                    print(f"✅ 添加新文章：{new_article.title[:60]}...")
+                    success_count += 1
                     
                     # 推送通知
                     if summary and self.notifier.webhook_url:
+                        print(f"📤 发送飞书推送...")
                         await self.notifier.send_article_notification(
                             title=new_article.title,
                             summary=summary,
                             url=new_article.url
                         )
                         new_article.notified = True
+                    elif summary and not self.notifier.webhook_url:
+                        print(f"⚠️  跳过推送（未配置 Webhook）")
                 
                 await session.commit()
-                print(f"[{datetime.now()}] 文章处理完成")
                 
         except Exception as e:
-            print(f"爬取处理失败：{e}")
+            print(f"\n❌ 爬取处理失败：{e}")
             import traceback
             traceback.print_exc()
+            raise
+        
+        finally:
+            end_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            print("\n" + "=" * 60)
+            print(f"[{end_timestamp}] 📊 处理完成统计:")
+            print(f"  - 爬取文章总数：{len(articles)}")
+            print(f"  - 新增文章：{new_count}")
+            print(f"  - 成功处理：{success_count}")
+            print("=" * 60)
     
     def start(self):
         """启动调度器"""

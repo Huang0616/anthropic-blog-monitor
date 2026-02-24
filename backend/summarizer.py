@@ -2,6 +2,7 @@ import httpx
 import json
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 
 class Summarizer:
@@ -9,6 +10,7 @@ class Summarizer:
     
     def __init__(self):
         self.api_config = self._load_openclaw_config()
+        self.request_count = 0
     
     def _load_openclaw_config(self) -> dict:
         """从 OpenClaw 配置加载大模型 API 配置"""
@@ -66,7 +68,7 @@ class Summarizer:
     
     async def summarize(self, title: str, content: str, max_length: int = 500) -> Optional[str]:
         """
-        生成文章摘要
+        生成文章摘要 - 带降级策略
         
         Args:
             title: 文章标题
@@ -76,8 +78,14 @@ class Summarizer:
         Returns:
             摘要文本，失败返回 None
         """
-        if not content:
-            return None
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        
+        # 降级策略：如果没有 content，使用 title 生成简短摘要
+        if not content or len(content.strip()) < 50:
+            print(f"[{timestamp}] ⚠️ 内容过短，使用标题作为摘要：{title[:50]}...")
+            return f"📝 本文介绍了 **{title}** 的相关内容。"
+        
+        self.request_count += 1
         
         # 截取内容（避免 token 超限）
         truncated_content = content[:3000]
@@ -92,6 +100,8 @@ class Summarizer:
 请用中文输出摘要，包含文章的核心观点和主要结论。"""
 
         try:
+            print(f"[{timestamp}] 🤖 正在生成摘要 (请求 #{self.request_count})...")
+            
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     f"{self.api_config['base_url']}/chat/completions",
@@ -120,12 +130,16 @@ class Summarizer:
                 data = response.json()
                 
                 if data.get('choices') and len(data['choices']) > 0:
-                    summary = data['choices'][0]['message']['content']
-                    return summary.strip()
+                    summary = data['choices'][0]['message']['content'].strip()
+                    print(f"[{timestamp}] ✅ 摘要生成成功 ({len(summary)} 字符)")
+                    return summary
                 else:
-                    print(f"API 返回异常：{data}")
+                    print(f"[{timestamp}] ❌ API 返回异常：{data}")
                     return None
                     
+        except httpx.TimeoutException as e:
+            print(f"[{timestamp}] ❌ 请求超时：{e}")
+            return f"📝 本文介绍了 **{title}** 的相关内容。（摘要生成超时）"
         except Exception as e:
-            print(f"生成摘要失败：{e}")
-            return None
+            print(f"[{timestamp}] ❌ 生成摘要失败：{e}")
+            return f"📝 本文介绍了 **{title}** 的相关内容。（摘要生成失败）"

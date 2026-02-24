@@ -25,6 +25,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: anthropic-blog-backend
+    env_file:
+      - .env
     environment:
       POSTGRES_USER: anthropic_blog
       POSTGRES_PASSWORD: anthropic_blog_pass
