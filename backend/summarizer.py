@@ -1,20 +1,66 @@
 import httpx
+import json
+from pathlib import Path
 from typing import Optional
-from config import openclaw_config
 
 
 class Summarizer:
     """文章摘要生成器"""
     
     def __init__(self):
-        self.api_config = openclaw_config.get_model_api_config("qwen")
+        self.api_config = self._load_openclaw_config()
+    
+    def _load_openclaw_config(self) -> dict:
+        """从 OpenClaw 配置加载大模型 API 配置"""
+        config_path = Path.home() / ".openclaw" / "openclaw.json"
         
-        # 如果没有找到配置，使用默认的 Dashscope 配置
-        if not self.api_config:
-            print("警告：未找到 OpenClaw 配置，使用默认 Dashscope 配置")
-            self.api_config = {
+        if not config_path.exists():
+            print(f"警告：未找到 OpenClaw 配置文件 {config_path}")
+            return {
                 "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "api_key": "",  # 需要用户设置
+                "api_key": "",
+                "model": "qwen-plus"
+            }
+        
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # 从 models.providers 中获取 custom-coding-dashscope-aliyuncs-com 配置
+            providers = config.get('models', {}).get('providers', {})
+            dashscope_config = providers.get('custom-coding-dashscope-aliyuncs-com', {})
+            
+            if dashscope_config:
+                api_key = dashscope_config.get('apiKey', '')
+                base_url = dashscope_config.get('baseUrl', 'https://coding.dashscope.aliyuncs.com/v1')
+                
+                # 查找 qwen3.5-plus 模型
+                models = dashscope_config.get('models', [])
+                model_id = 'qwen3.5-plus'
+                for m in models:
+                    if 'qwen' in m.get('id', '').lower() and 'plus' in m.get('id', '').lower():
+                        model_id = m['id']
+                        break
+                
+                print(f"✅ 已加载 OpenClaw 配置：{base_url} / {model_id}")
+                return {
+                    "base_url": base_url.rstrip('/'),
+                    "api_key": api_key,
+                    "model": model_id
+                }
+            
+            print("警告：未找到 Dashscope 配置，使用默认配置")
+            return {
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "api_key": "",
+                "model": "qwen-plus"
+            }
+            
+        except Exception as e:
+            print(f"加载 OpenClaw 配置失败：{e}")
+            return {
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "api_key": "",
                 "model": "qwen-plus"
             }
     

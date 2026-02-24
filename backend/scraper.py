@@ -1,8 +1,7 @@
 import httpx
-from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
-import re
+import json
 
 
 class AnthropicScraper:
@@ -25,61 +24,42 @@ class AnthropicScraper:
             print(f"获取页面失败 {url}: {e}")
             return None
     
-    def parse_date(self, date_str: str) -> Optional[datetime]:
-        """解析日期字符串"""
-        if not date_str:
-            return None
-        
-        # 尝试多种日期格式
-        formats = [
-            "%Y-%m-%d",
-            "%B %d, %Y",
-            "%b %d, %Y",
-            "%Y年%m月%d日",
-        ]
-        
-        for fmt in formats:
-            try:
-                return datetime.strptime(date_str.strip(), fmt)
-            except ValueError:
-                continue
-        
-        return None
-    
     async def scrape_engineering(self) -> List[Dict]:
-        """爬取 Engineering 博客"""
+        """爬取 Engineering 博客 - 从页面提取文章列表"""
         url = f"{self.base_url}/engineering"
         html = await self.fetch_page(url)
         if not html:
             return []
         
         articles = []
-        soup = BeautifulSoup(html, 'html.parser')
         
-        # 查找文章卡片
-        article_cards = soup.find_all('a', href=re.compile(r'/engineering/'))
+        # 从 HTML 中提取文章链接和标题
+        # 查找类似：href="/engineering/article-slug"
+        import re
         
-        for card in article_cards[:20]:  # 限制数量
-            href = card.get('href', '')
-            if not href or href.startswith('#'):
+        # 匹配文章卡片
+        pattern = r'href="(/engineering/[^"]+)"'
+        matches = re.findall(pattern, html)
+        
+        seen_slugs = set()
+        for slug in matches:
+            if slug in seen_slugs or slug.count('/') > 2:
                 continue
+            seen_slugs.add(slug)
             
-            # 获取完整 URL
-            full_url = href if href.startswith('http') else f"{self.base_url}{href}"
+            # 提取标题（从附近的文本）
+            title_pattern = rf'{re.escape(slug)}[^>]*>([^<]+)'
+            title_match = re.search(title_pattern, html)
+            title = title_match.group(1).strip() if title_match else slug.split('/')[-1].replace('-', ' ').title()
             
-            # 提取标题
-            title_elem = card.find(['h1', 'h2', 'h3', 'p'])
-            title = title_elem.get_text(strip=True) if title_elem else "无标题"
-            
-            if title and len(title) > 10:  # 过滤太短的标题
-                articles.append({
-                    "title": title,
-                    "url": full_url,
-                    "source": "engineering",
-                    "published_date": None
-                })
+            articles.append({
+                "title": title,
+                "url": f"{self.base_url}{slug}",
+                "source": "engineering",
+                "published_date": None
+            })
         
-        return articles
+        return articles[:15]  # 限制数量
     
     async def scrape_news(self) -> List[Dict]:
         """爬取 News 页面"""
@@ -89,31 +69,26 @@ class AnthropicScraper:
             return []
         
         articles = []
-        soup = BeautifulSoup(html, 'html.parser')
+        import re
         
-        # 查找文章链接
-        article_links = soup.find_all('a', href=re.compile(r'/news/'))
+        # 匹配新闻链接
+        pattern = r'href="(/news/[^"]+)"'
+        matches = re.findall(pattern, html)
         
-        for link in article_links[:20]:
-            href = link.get('href', '')
-            if not href or href.startswith('#'):
+        seen_slugs = set()
+        for slug in matches:
+            if slug in seen_slugs or slug == '/news':
                 continue
+            seen_slugs.add(slug)
             
-            full_url = href if href.startswith('http') else f"{self.base_url}{href}"
-            
-            # 提取标题
-            title_elem = link.find(['h1', 'h2', 'h3', 'p'])
-            title = title_elem.get_text(strip=True) if title_elem else "无标题"
-            
-            if title and len(title) > 10:
-                articles.append({
-                    "title": title,
-                    "url": full_url,
-                    "source": "news",
-                    "published_date": None
-                })
+            articles.append({
+                "title": slug.split('/')[-1].replace('-', ' ').title(),
+                "url": f"{self.base_url}{slug}",
+                "source": "news",
+                "published_date": None
+            })
         
-        return articles
+        return articles[:10]
     
     async def scrape_article_content(self, url: str) -> Optional[str]:
         """获取文章正文内容"""
@@ -121,35 +96,33 @@ class AnthropicScraper:
         if not html:
             return None
         
-        soup = BeautifulSoup(html, 'html.parser')
+        import re
         
-        # 查找主要内容区域
-        content_areas = []
+        # 1. 尝试提取 meta description
+        desc_match = re.search(r'<meta[^>]+name="description"[^>]+content="([^"]+)"', html)
+        if desc_match:
+            return desc_match.group(1)
         
-        # 尝试多种选择器
-        for selector in ['article', 'main', '.content', '.post-content', '[role="main"]']:
-            elements = soup.select(selector)
-            for elem in elements:
-                content_areas.append(elem)
+        # 2. 尝试提取 og:description
+        og_match = re.search(r'<meta[^>]+property="og:description"[^>]+content="([^"]+)"', html)
+        if og_match:
+            return og_match.group(1)
         
-        # 如果没有找到特定区域，使用 body
-        if not content_areas:
-            content_areas = [soup.find('body')]
+        # 3. 从 script 标签中的 JSON 数据提取（Next.js SSR）
+        json_match = re.search(r'"summary":"([^"]+)"', html)
+        if json_match:
+            # 处理转义字符
+            summary = json_match.group(1).replace('\\n', ' ').replace('\\"', '"')
+            return summary[:2000]
         
-        # 提取文本
-        texts = []
-        for area in content_areas:
-            if area:
-                # 移除脚本和样式
-                for tag in area(['script', 'style', 'nav', 'footer', 'header']):
-                    tag.decompose()
-                texts.append(area.get_text(separator='\n', strip=True))
+        # 4. 尝试提取所有段落文本
+        paragraphs = re.findall(r'<p[^>]*>([^<]+)</p>', html)
+        if paragraphs:
+            content = ' '.join(paragraphs[:10])  # 取前 10 段
+            content = ' '.join(content.split())  # 清理空白
+            return content[:2000] if len(content) > 50 else None
         
-        content = '\n'.join(texts)
-        
-        # 清理空白行
-        lines = [line.strip() for line in content.split('\n') if line.strip()]
-        return '\n'.join(lines[:500])  # 限制长度
+        return None
     
     async def scrape_all(self, months: int = 3) -> List[Dict]:
         """爬取所有文章"""
@@ -171,9 +144,12 @@ class AnthropicScraper:
                 seen_urls.add(article['url'])
                 unique_articles.append(article)
         
-        # 获取详细内容
-        for article in unique_articles[:10]:  # 限制数量避免超时
+        print(f"爬取到 {len(unique_articles)} 篇文章")
+        
+        # 获取详细内容（限制数量避免超时）
+        for i, article in enumerate(unique_articles[:10]):
             content = await self.scrape_article_content(article['url'])
             article['content'] = content
+            print(f"获取内容 {i+1}/{min(10, len(unique_articles))}: {article['title'][:50]}...")
         
         return unique_articles

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = "anthropic_blog"
     POSTGRES_PASSWORD: str = "anthropic_blog_pass"
     POSTGRES_DB: str = "anthropic_blog"
-    POSTGRES_HOST: str = "postgres"
+    POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: str = "5432"
     
     # API 配置
