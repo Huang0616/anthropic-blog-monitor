@@ -106,6 +106,7 @@ async def get_articles(
             "url": article.url,
             "published_date": article.published_date.isoformat() if article.published_date else None,
             "summary": article.summary,
+            "content": article.content,  # 添加原文内容
             "created_at": article.created_at.isoformat(),
             "notified": article.notified
         }
