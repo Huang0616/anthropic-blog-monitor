@@ -104,91 +104,11 @@ class AnthropicScraper:
         return articles[:10]
     
     async def scrape_article_content(self, url: str) -> Optional[str]:
-        """获取文章正文内容 - 增强版"""
-        html = await self.fetch_page(url)
-        if not html:
-            return None
-        
-        try:
-            soup = BeautifulSoup(html, 'html.parser')
-            
-            # 方案 1: 尝试提取 Next.js 构建数据 (__NEXT_DATA__)
-            next_data_script = soup.find('script', id='__NEXT_DATA__')
-            if next_data_script and next_data_script.string:
-                try:
-                    next_data = json.loads(next_data_script.string)
-                    props = next_data.get('props', {})
-                    page_props = props.get('pageProps', {})
-                    # 尝试多种可能的内容字段
-                    content = (
-                        page_props.get('content') or 
-                        page_props.get('body') or 
-                        page_props.get('article', {}).get('content') or
-                        page_props.get('post', {}).get('content')
-                    )
-                    if content:
-                        cleaned = self._clean_html_content(str(content))
-                        if len(cleaned) > 100:
-                            print(f"  ✓ 从 __NEXT_DATA__ 提取内容成功 ({len(cleaned)} 字符)")
-                            return cleaned
-                except (json.JSONDecodeError, KeyError, AttributeError) as e:
-                    print(f"  解析 __NEXT_DATA__ 失败：{e}")
-            
-            # 方案 2: 查找文章容器
-            article_container = soup.find('article') or soup.find('main')
-            if article_container:
-                # 移除不需要的元素
-                for elem in article_container.find_all(['nav', 'header', 'footer', 'aside', 'script', 'style']):
-                    elem.decompose()
-                
-                # 提取段落
-                paragraphs = article_container.find_all('p')
-                if paragraphs:
-                    content = ' '.join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
-                    if len(content) > 100:
-                        cleaned = ' '.join(content.split())
-                        print(f"  ✓ 从 article 标签提取内容成功 ({len(cleaned)} 字符)")
-                        return cleaned[:3000]
-            
-            # 方案 3: 查找常见内容容器 class
-            content_classes = ['content', 'article-content', 'post-content', 'body', 'entry-content']
-            for class_name in content_classes:
-                content_div = soup.find(class_=class_name)
-                if content_div:
-                    content = content_div.get_text(separator=' ', strip=True)
-                    if len(content) > 100:
-                        print(f"  ✓ 从 class='{class_name}' 提取内容成功 ({len(content)} 字符)")
-                        return content[:3000]
-            
-            # 方案 4: 使用 meta description 作为后备
-            meta_desc = soup.find('meta', attrs={'name': 'description'})
-            if meta_desc and meta_desc.get('content'):
-                desc = meta_desc['content'].strip()
-                if len(desc) > 50:
-                    print(f"  ✓ 从 meta description 提取内容 ({len(desc)} 字符)")
-                    return desc
-            
-            # 方案 5: 提取所有文本（最后的手段）
-            text_content = soup.get_text(separator=' ', strip=True)
-            if len(text_content) > 200:
-                print(f"  ✓ 使用全文提取 ({len(text_content)} 字符)")
-                return text_content[:3000]
-            
-            print(f"  ✗ 无法提取内容")
-            return None
-            
-        except Exception as e:
-            print(f"  解析 HTML 失败：{e}")
-            return None
-    
-    def _clean_html_content(self, content: str) -> str:
-        """清理 HTML 内容"""
-        # 移除 HTML 标签
-        soup = BeautifulSoup(content, 'html.parser')
-        text = soup.get_text(separator=' ', strip=True)
-        # 清理空白字符
-        text = ' '.join(text.split())
-        return text[:3000]
+        """获取文章 URL（直接返回给模型处理）"""
+        # 不再爬取内容，直接返回 URL
+        # 让大模型自己访问 URL 并总结
+        print(f"  ✓ 准备 URL 让模型访问：{url}")
+        return url
     
     async def scrape_all(self, months: int = 3) -> List[Dict]:
         """爬取所有文章 - 带速率限制"""

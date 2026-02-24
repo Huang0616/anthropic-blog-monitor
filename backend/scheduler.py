@@ -52,18 +52,18 @@ class BlogScheduler:
                     
                     new_count += 1
                     
-                    # 生成摘要
+                    # 生成摘要（直接传 URL 给模型）
                     summary = await self.summarizer.summarize(
                         title=article_data['title'],
-                        content=article_data.get('content', '')
+                        url=article_data['url']
                     )
                     
-                    # 创建新文章记录
+                    # 创建新文章记录 - URL 作为 content 存储
                     new_article = Article(
                         title=article_data['title'],
                         url=article_data['url'],
                         published_date=article_data.get('published_date'),
-                        content=article_data.get('content', ''),
+                        content=article_data['url'],  # 存储 URL，让模型访问
                         summary=summary,
                         notified=False
                     )
