@@ -1,42 +1,19 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: registry.cn-hangzhou.aliyuncs.com/library/postgres:15-alpine
-    container_name: anthropic-blog-db
-    environment:
-      POSTGRES_USER: anthropic_blog
-      POSTGRES_PASSWORD: anthropic_blog_pass
-      POSTGRES_DB: anthropic_blog
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - blog-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U anthropic_blog"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: anthropic-blog-backend
     environment:
-      POSTGRES_USER: anthropic_blog
-      POSTGRES_PASSWORD: anthropic_blog_pass
-      POSTGRES_DB: anthropic_blog
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
+      DATABASE_URL: sqlite+aiosqlite:///./anthropic_blog.db
       FEISHU_WEBHOOK: ${FEISHU_WEBHOOK:-}
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - blog-network
     volumes:
       - /Users/huangyifei/.openclaw:/root/.openclaw:ro
+      - backend_data:/app/data
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -61,4 +38,4 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data:
+  backend_data:

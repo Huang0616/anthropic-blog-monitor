@@ -1,4 +1,4 @@
-FROM registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -8,6 +8,9 @@ RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua
 
 # 复制代码
 COPY . .
+
+# 创建数据目录
+RUN mkdir -p /app/data
 
 # 暴露端口
 EXPOSE 8000
