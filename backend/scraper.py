@@ -26,60 +26,101 @@ class AnthropicScraper:
             return response.text
     
     async def scrape_engineering(self) -> List[Dict]:
-        """爬取 Engineering 博客"""
+        """爬取 Engineering 博客 - 使用 Jina Reader"""
         url = f"{self.base_url}/engineering"
-        html = await self.fetch_page(url)
-        if not html:
+        
+        try:
+            # 使用 Jina Reader 获取渲染后的内容
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(f"https://r.jina.ai/{url}")
+                resp.raise_for_status()
+                content = resp.text
+        except Exception as e:
+            print(f"Jina Reader 失败：{e}")
             return []
         
         articles = []
-        soup = BeautifulSoup(html, 'html.parser')
         
-        for card in soup.find_all('a', href=re.compile(r'/engineering/[^/]+$'))[:15]:
-            href = card.get('href', '')
-            if not href or href == '/engineering':
+        # 从 Markdown 内容中提取链接
+        # Jina Reader 返回的格式：[标题](https://www.anthropic.com/engineering/xxx)
+        pattern = r'\[([^\]]+)\]\(https://www\.anthropic\.com/engineering/([^/\s\)]+)\)'
+        
+        for match in re.finditer(pattern, content):
+            title = match.group(1).strip()
+            slug = match.group(2)
+            
+            # 跳过首页链接
+            if not slug or slug == 'engineering':
                 continue
             
-            title = card.get_text(strip=True)
-            if not title:
-                title = href.split('/')[-1].replace('-', ' ').title()
+            # 清理标题（去除 Image、Featured 等前缀）
+            if title.startswith('Image ') or 'Featured' in title:
+                continue
             
             articles.append({
                 "title": title,
-                "url": f"{self.base_url}{href}",
+                "url": f"{self.base_url}/engineering/{slug}",
                 "source": "engineering",
                 "published_date": None
             })
         
-        return articles
+        # 去重
+        seen = set()
+        unique = []
+        for a in articles:
+            if a['url'] not in seen:
+                seen.add(a['url'])
+                unique.append(a)
+        
+        return unique[:15]  # 最多 15 篇
     
     async def scrape_news(self) -> List[Dict]:
-        """爬取 News 页面"""
+        """爬取 News 页面 - 使用 Jina Reader"""
         url = f"{self.base_url}/news"
-        html = await self.fetch_page(url)
-        if not html:
+        
+        try:
+            # 使用 Jina Reader 获取渲染后的内容
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(f"https://r.jina.ai/{url}")
+                resp.raise_for_status()
+                content = resp.text
+        except Exception as e:
+            print(f"Jina Reader 失败：{e}")
             return []
         
         articles = []
-        soup = BeautifulSoup(html, 'html.parser')
         
-        for card in soup.find_all('a', href=re.compile(r'/news/[^/]+$'))[:10]:
-            href = card.get('href', '')
-            if not href or href == '/news':
+        # 从 Markdown 内容中提取链接
+        pattern = r'\[([^\]]+)\]\(https://www\.anthropic\.com/news/([^/\s\)]+)\)'
+        
+        for match in re.finditer(pattern, content):
+            title = match.group(1).strip()
+            slug = match.group(2)
+            
+            # 跳过首页链接
+            if not slug or slug == 'news':
                 continue
             
-            title = card.get_text(strip=True)
-            if not title:
-                title = href.split('/')[-1].replace('-', ' ').title()
+            # 清理标题
+            if title.startswith('Image ') or 'Featured' in title:
+                continue
             
             articles.append({
                 "title": title,
-                "url": f"{self.base_url}{href}",
+                "url": f"{self.base_url}/news/{slug}",
                 "source": "news",
                 "published_date": None
             })
         
-        return articles
+        # 去重
+        seen = set()
+        unique = []
+        for a in articles:
+            if a['url'] not in seen:
+                seen.add(a['url'])
+                unique.append(a)
+        
+        return unique[:10]  # 最多 10 篇
     
     async def scrape_article_content(self, url: str) -> Optional[str]:
         """获取文章内容 - Jina Reader 方案"""
