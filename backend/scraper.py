@@ -82,26 +82,56 @@ class AnthropicScraper:
         return articles
     
     async def scrape_article_content(self, url: str) -> Optional[str]:
-        """获取文章内容 - 简化版"""
-        html = await self.fetch_page(url)
-        if not html:
+        """获取文章内容 - Jina Reader 方案"""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                # 使用 Jina Reader 直接获取纯净文本
+                resp = await client.get(f"https://r.jina.ai/{url}")
+                resp.raise_for_status()
+                content = resp.text.strip()
+                
+                if len(content) > 100:
+                    print(f"  ✓ Jina Reader 成功 ({len(content)} 字符)")
+                    return content[:5000]  # 返回更多内容给模型
+                return None
+        except Exception as e:
+            print(f"  ✗ Jina Reader 失败：{e}")
             return None
+    
+    async def scrape_one_article(self, existing_urls: set) -> Optional[Dict]:
+        """只抓取一篇新文章"""
+        print("=" * 60)
+        print("开始抓取单篇文章...")
+        print("=" * 60)
         
-        soup = BeautifulSoup(html, 'html.parser')
+        # 先尝试 Engineering 页面
+        eng_articles = await self.scrape_engineering()
+        for article in eng_articles:
+            if article['url'] not in existing_urls:
+                print(f"发现新文章 (Engineering): {article['title']}")
+                content = await self.scrape_article_content(article['url'])
+                article['content'] = content
+                print(f"内容获取：{'✓' if content else '✗'}")
+                print("=" * 60)
+                return article
         
-        # 提取所有段落
-        paragraphs = soup.find_all('p')
-        if paragraphs:
-            content = ' '.join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
-            if len(content) > 100:
-                return content[:3000]
+        # 再尝试 News 页面
+        news_articles = await self.scrape_news()
+        for article in news_articles:
+            if article['url'] not in existing_urls:
+                print(f"发现新文章 (News): {article['title']}")
+                content = await self.scrape_article_content(article['url'])
+                article['content'] = content
+                print(f"内容获取：{'✓' if content else '✗'}")
+                print("=" * 60)
+                return article
         
-        # 备用：提取所有文本
-        text = soup.get_text(separator=' ', strip=True)
-        return text[:3000] if len(text) > 200 else None
+        print("未发现新文章")
+        print("=" * 60)
+        return None
     
     async def scrape_all(self, months: int = 3) -> List[Dict]:
-        """爬取所有文章"""
+        """爬取所有文章（保留向后兼容）"""
         print("=" * 60)
         print("开始爬取 Anthropic 博客...")
         print("=" * 60)
