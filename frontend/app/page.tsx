@@ -19,9 +19,32 @@ const fetcher = (url: string) => fetch(url).then((res) => res.json())
 export default function Home() {
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null)
   const [showContent, setShowContent] = useState(false)
-  const { data: articles, error, isLoading } = useSWR<Article[]>('/api/articles', fetcher, {
+  const { data: articles, error, isLoading, mutate } = useSWR<Article[]>('/api/articles', fetcher, {
     refreshInterval: 60000, // 每分钟刷新
   })
+
+  // 删除文章
+  const handleDelete = async (id: number, title: string) => {
+    if (!confirm(`确定要删除这篇文章吗？\n\n${title.substring(0, 50)}...`)) {
+      return
+    }
+    
+    try {
+      const response = await fetch(`/api/articles/${id}`, {
+        method: 'DELETE',
+      })
+      
+      if (response.ok) {
+        alert('文章已删除')
+        mutate() // 重新加载列表
+      } else {
+        const data = await response.json()
+        alert(`删除失败：${data.detail || '未知错误'}`)
+      }
+    } catch (error) {
+      alert(`删除失败：${error}`)
+    }
+  }
 
   if (error) return <div className="text-center text-red-500 mt-10">加载失败</div>
   if (isLoading) return <div className="text-center mt-10">加载中...</div>
@@ -95,6 +118,12 @@ export default function Home() {
                       📄 查看原文
                     </button>
                   )}
+                  <button
+                    onClick={() => handleDelete(article.id, article.title)}
+                    className="text-red-600 hover:underline"
+                  >
+                    🗑️ 删除
+                  </button>
                   <a
                     href={article.url}
                     target="_blank"

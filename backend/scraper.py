@@ -139,13 +139,97 @@ class AnthropicScraper:
             print(f"  ✗ Jina Reader 失败：{e}")
             return None
     
-    async def scrape_one_article(self, existing_urls: set) -> Optional[Dict]:
-        """只抓取一篇新文章"""
+    async def scrape_article_metadata(self, url: str) -> Optional[Dict]:
+        """获取文章元数据（包括发布时间）"""
+        try:
+            # 使用 Jina Reader 获取文章内容
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(f"https://r.jina.ai/{url}")
+                resp.raise_for_status()
+                content = resp.text.strip()
+                
+                if len(content) < 100:
+                    return None
+                
+                # 尝试从内容中提取日期（常见格式）
+                published_date = None
+                date_patterns = [
+                    r'(\d{4}-\d{2}-\d{2})',  # 2024-01-15
+                    r'(\d{2}/\d{2}/\d{4})',  # 01/15/2024
+                    r'(\w+ \d{1,2}, \d{4})',  # January 15, 2024
+                ]
+                
+                # 只在前 500 个字符中查找日期（通常在开头）
+                header = content[:500]
+                for pattern in date_patterns:
+                    match = re.search(pattern, header)
+                    if match:
+                        date_str = match.group(1)
+                        try:
+                            # 尝试解析不同格式
+                            for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%B %d, %Y']:
+                                try:
+                                    published_date = datetime.strptime(date_str, fmt)
+                                    break
+                                except:
+                                    continue
+                        except:
+                            pass
+                        if published_date:
+                            break
+                
+                return {
+                    'content': content[:5000],
+                    'published_date': published_date
+                }
+        except Exception as e:
+            print(f"  ✗ 获取文章元数据失败：{e}")
+            return None
+    
+    async def scrape_one_engineering_article_by_date(self, last_check: datetime) -> Optional[Dict]:
+        """只抓取一篇 Engineering 新文章（基于时间戳）"""
         print("=" * 60)
-        print("开始抓取单篇文章...")
+        print("开始抓取 Engineering 文章...")
         print("=" * 60)
         
-        # 先尝试 Engineering 页面
+        # 只爬取 Engineering 页面
+        eng_articles = await self.scrape_engineering()
+        
+        for article in eng_articles:
+            # 获取文章元数据（包括发布时间）
+            metadata = await self.scrape_article_metadata(article['url'])
+            
+            if not metadata:
+                print(f"⏭️  跳过（无法获取内容）: {article['title'][:50]}...")
+                continue
+            
+            article['content'] = metadata['content']
+            article['published_date'] = metadata['published_date']
+            
+            # 检查发布时间是否晚于最后检查时间
+            if metadata['published_date']:
+                print(f"📅 文章发布时间：{metadata['published_date'].strftime('%Y-%m-%d %H:%M:%S')}")
+                if metadata['published_date'] <= last_check:
+                    print(f"⏭️  跳过（旧文章）: {article['title'][:50]}...")
+                    continue
+            
+            # 发现新文章
+            print(f"✅ 发现新文章：{article['title']}")
+            print(f"   内容长度：{len(metadata['content'])} 字符")
+            print("=" * 60)
+            return article
+        
+        print("未发现新 Engineering 文章")
+        print("=" * 60)
+        return None
+    
+    async def scrape_one_engineering_article(self, existing_urls: set) -> Optional[Dict]:
+        """只抓取一篇 Engineering 新文章（基于 URL 去重，保留向后兼容）"""
+        print("=" * 60)
+        print("开始抓取 Engineering 文章...")
+        print("=" * 60)
+        
+        # 只爬取 Engineering 页面
         eng_articles = await self.scrape_engineering()
         for article in eng_articles:
             if article['url'] not in existing_urls:
@@ -156,20 +240,13 @@ class AnthropicScraper:
                 print("=" * 60)
                 return article
         
-        # 再尝试 News 页面
-        news_articles = await self.scrape_news()
-        for article in news_articles:
-            if article['url'] not in existing_urls:
-                print(f"发现新文章 (News): {article['title']}")
-                content = await self.scrape_article_content(article['url'])
-                article['content'] = content
-                print(f"内容获取：{'✓' if content else '✗'}")
-                print("=" * 60)
-                return article
-        
-        print("未发现新文章")
+        print("未发现新 Engineering 文章")
         print("=" * 60)
         return None
+    
+    async def scrape_one_article(self, existing_urls: set) -> Optional[Dict]:
+        """只抓取一篇新文章（保留向后兼容）"""
+        return await self.scrape_one_engineering_article(existing_urls)
     
     async def scrape_all(self, months: int = 3) -> List[Dict]:
         """爬取所有文章（保留向后兼容）"""

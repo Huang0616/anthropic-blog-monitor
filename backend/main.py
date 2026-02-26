@@ -76,10 +76,11 @@ async def root():
 @app.get("/status")
 async def get_status():
     """服务状态"""
+    job = scheduler.scheduler.get_job('periodic_scrape') if scheduler else None
     return {
         "status": "running",
         "scheduler_running": scheduler.is_running if scheduler else False,
-        "next_run": str(scheduler.scheduler.get_job('daily_scrape').next_run_time) if scheduler else None,
+        "next_run": str(job.next_run_time) if job else None,
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -145,6 +146,23 @@ async def trigger_scrape():
         return {"status": "success", "message": "爬取完成"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/articles/{article_id}")
+async def delete_article(article_id: int, db: AsyncSession = Depends(get_db)):
+    """删除指定文章"""
+    result = await db.execute(
+        select(Article).where(Article.id == article_id)
+    )
+    article = result.scalar_one_or_none()
+    
+    if not article:
+        raise HTTPException(status_code=404, detail="文章不存在")
+    
+    await db.delete(article)
+    await db.commit()
+    
+    return {"status": "success", "message": f"文章已删除：{article.title}"}
 
 
 if __name__ == "__main__":

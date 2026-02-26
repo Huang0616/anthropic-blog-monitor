@@ -12,25 +12,12 @@ class Summarizer:
         self.api_config = self._load_openclaw_config()
     
     def _load_openclaw_config(self) -> dict:
-        config_path = Path.home() / ".openclaw" / "openclaw.json"
-        if not config_path.exists():
-            return {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "api_key": "", "model": "qwen-plus"}
-        
-        try:
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-            providers = config.get('models', {}).get('providers', {})
-            ds = providers.get('custom-coding-dashscope-aliyuncs-com', {})
-            if ds:
-                return {
-                    "base_url": ds.get('baseUrl', '').rstrip('/'),
-                    "api_key": ds.get('apiKey', ''),
-                    "model": 'qwen3.5-plus'
-                }
-        except Exception as e:
-            print(f"配置加载失败：{e}")
-        
-        return {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "api_key": "", "model": "qwen-plus"}
+        # 使用 GLM-4.7 模型
+        return {
+            "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+            "api_key": "a18ad9d58bea4ebeaf24f5c48e47e648.YRzUI6jSN2ODgf3F",
+            "model": "glm-4.7"
+        }
     
     async def summarize(self, title: str, content: str) -> Optional[str]:
         if not content or len(content.strip()) < 50:
