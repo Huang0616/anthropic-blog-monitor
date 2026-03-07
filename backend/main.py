@@ -50,17 +50,8 @@ async def startup_event():
     scheduler = BlogScheduler(async_session_maker)
     scheduler.start()
     
-    # 首次爬取
-    asyncio.create_task(initial_scrape())
-
-
-async def initial_scrape():
-    """首次启动时执行一次爬取"""
-    await asyncio.sleep(5)  # 等待 5 秒后执行
-    try:
-        await scheduler.scrape_and_process()
-    except Exception as e:
-        print(f"首次爬取失败：{e}")
+    # 首次爬取（延迟 15 秒，避免与定时任务冲突）
+    # asyncio.create_task(initial_scrape())
 
 
 @app.get("/")
@@ -76,11 +67,17 @@ async def root():
 @app.get("/status")
 async def get_status():
     """服务状态"""
-    job = scheduler.scheduler.get_job('periodic_scrape') if scheduler else None
+    scrape_job = scheduler.scheduler.get_job('periodic_scrape') if scheduler else None
+    translate_job = scheduler.scheduler.get_job('translate_existing_articles') if scheduler else None
     return {
         "status": "running",
         "scheduler_running": scheduler.is_running if scheduler else False,
-        "next_run": str(job.next_run_time) if job else None,
+        "scrape_job": {
+            "next_run": str(scrape_job.next_run_time) if scrape_job else None,
+        },
+        "translate_job": {
+            "next_run": str(translate_job.next_run_time) if translate_job else None,
+        },
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -99,7 +96,7 @@ async def get_articles(
         .limit(limit)
     )
     articles = result.scalars().all()
-    
+
     return [
         {
             "id": article.id,
@@ -108,6 +105,10 @@ async def get_articles(
             "published_date": article.published_date.isoformat() if article.published_date else None,
             "summary": article.summary,
             "content": article.content,  # 添加原文内容
+            "translation": article.translation,  # 添加翻译内容
+            "translated_at": article.translated_at.isoformat() if article.translated_at else None,
+            "content_translation": article.content_translation,  # 添加全文翻译
+            "content_translated_at": article.content_translated_at.isoformat() if article.content_translated_at else None,
             "created_at": article.created_at.isoformat(),
             "notified": article.notified
         }
@@ -144,6 +145,16 @@ async def trigger_scrape():
     try:
         await scheduler.scrape_and_process()
         return {"status": "success", "message": "爬取完成"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/translate")
+async def trigger_translate():
+    """手动触发翻译未翻译文章"""
+    try:
+        await scheduler.translate_existing_articles()
+        return {"status": "success", "message": "翻译任务执行完成"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

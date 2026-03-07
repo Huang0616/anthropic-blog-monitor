@@ -8,6 +8,7 @@ import asyncio
 
 from scraper import AnthropicScraper
 from summarizer import Summarizer
+from translator import Translator
 from notifier import FeishuNotifier
 from models import Article, ScraperState
 from config import settings
@@ -21,6 +22,7 @@ class BlogScheduler:
         self.db_session_factory = db_session_factory
         self.scraper = AnthropicScraper()
         self.summarizer = Summarizer()
+        self.translator = Translator()
         self.notifier = FeishuNotifier()
         self.is_running = False
     
@@ -73,11 +75,44 @@ class BlogScheduler:
             last_check = await self.get_last_check_time()
             print(f"📅 最后检查时间：{last_check.strftime('%Y-%m-%d %H:%M:%S')}")
             
-            # 只抓取一篇 Engineering 新文章（基于时间戳）
-            article_data = await self.scraper.scrape_one_engineering_article_by_date(last_check)
+            # 获取所有已存在的 URL
+            async with self.db_session_factory() as session:
+                result = await session.execute(select(Article.url))
+                existing_urls = set(row[0] for row in result.all())
+            
+            # 只抓取一篇 Engineering 新文章（基于时间戳 + URL 去重）
+            article_data = await self.scraper.scrape_one_engineering_article_by_date(last_check, existing_urls)
             
             if not article_data:
-                print("没有新文章，跳过本次执行")
+                print("没有新文章，发送系统状态报告")
+                # 获取统计信息
+                async with self.db_session_factory() as session:
+                    # 文章总数
+                    from sqlalchemy import func
+                    count_result = await session.execute(select(func.count(Article.id)))
+                    total_articles = count_result.scalar()
+                    
+                    # 最新文章
+                    latest_result = await session.execute(
+                        select(Article).order_by(Article.created_at.desc()).limit(1)
+                    )
+                    latest_article = latest_result.scalar_one_or_none()
+                    
+                    latest_info = None
+                    if latest_article:
+                        latest_info = {
+                            'title': latest_article.title,
+                            'published_date': latest_article.published_date or latest_article.created_at
+                        }
+                    
+                    # 发送状态报告
+                    if self.notifier.webhook_url:
+                        await self.notifier.send_status_report(
+                            total_articles=total_articles,
+                            last_check=datetime.now(),
+                            latest_article=latest_info
+                        )
+                
                 return
             
             # 检查是否已存在（双重检查）
@@ -102,12 +137,30 @@ class BlogScheduler:
                     print(f"⚠️  摘要生成失败：{e}，使用标题作为摘要")
                     summary = article_data['title']
                 
+                # 翻译标题和摘要
+                translation = None
+                if summary:
+                    try:
+                        print(f"🌐 开始翻译...")
+                        translation = await self.translator.translate(
+                            title=article_data['title'],
+                            summary=summary
+                        )
+                        if translation:
+                            print(f"✅ 翻译成功")
+                        else:
+                            print(f"⚠️  翻译失败，继续处理")
+                    except Exception as e:
+                        print(f"⚠️  翻译失败：{e}，继续处理")
+                
                 new_article = Article(
                     title=article_data['title'],
                     url=article_data['url'],
                     published_date=article_data.get('published_date'),
                     content=content,
                     summary=summary,
+                    translation=str(translation) if translation else None,  # 存储为 JSON 字符串
+                    translated_at=datetime.now() if translation else None,
                     notified=False
                 )
                 
@@ -120,7 +173,8 @@ class BlogScheduler:
                     await self.notifier.send_article_notification(
                         title=new_article.title,
                         summary=summary,
-                        url=new_article.url
+                        url=new_article.url,
+                        translation=translation
                     )
                     new_article.notified = True
                 elif summary and not self.notifier.webhook_url:
@@ -143,6 +197,76 @@ class BlogScheduler:
             print(f"[{end_timestamp}] 📊 处理完成")
             print("=" * 60)
     
+    async def translate_existing_articles(self):
+        """翻译未翻译的文章（一次只处理1篇，包含全文翻译）"""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print("\n" + "=" * 60)
+        print(f"[{timestamp}] 🌐 开始翻译未翻译文章...")
+        print("=" * 60)
+
+        try:
+            async with self.db_session_factory() as session:
+                # 查询未全文翻译的文章（优先翻译有内容的）
+                from sqlalchemy import or_
+                result = await session.execute(
+                    select(Article).where(
+                        or_(
+                            Article.content_translation.is_(None),
+                            Article.content_translation == ''
+                        ),
+                        Article.content.isnot(None),  # 必须有内容才能全文翻译
+                        Article.content != ''
+                    ).order_by(Article.created_at.desc()).limit(1)  # 一次只处理1篇
+                )
+                article = result.scalar_one_or_none()
+
+                if not article:
+                    print("✅ 所有文章已翻译，无需处理")
+                    return
+
+                print(f"📝 开始翻译文章：{article.title[:50]}...")
+
+                try:
+                    # 调用全文翻译接口
+                    content_translation = await self.translator.translate_full_content(
+                        title=article.title,
+                        summary=article.summary or article.title,
+                        content=article.content
+                    )
+
+                    if content_translation:
+                        import json
+
+                        # 存储全文翻译结果
+                        article.content_translation = json.dumps(content_translation, ensure_ascii=False)
+                        article.content_translated_at = datetime.now()
+                        print(f"✅ 全文翻译成功")
+
+                        # 同时更新标题和摘要的翻译（如果之前没有翻译）
+                        if not article.translation and (content_translation.get('title') or content_translation.get('summary')):
+                            simple_translation = {
+                                "title": content_translation.get('title', ''),
+                                "summary": content_translation.get('summary', '')
+                            }
+                            article.translation = json.dumps(simple_translation, ensure_ascii=False)
+                            article.translated_at = datetime.now()
+                            print(f"✅ 同时更新标题和摘要翻译")
+                    else:
+                        print(f"⚠️  全文翻译失败，跳过")
+
+                except Exception as e:
+                    print(f"❌ 翻译文章失败：{e}")
+                    import traceback
+                    traceback.print_exc()
+
+                await session.commit()
+                print(f"\n✅ 本次翻译任务完成")
+
+        except Exception as e:
+            print(f"\n❌ 翻译任务失败：{e}")
+            import traceback
+            traceback.print_exc()
+    
     def start(self):
         """启动调度器"""
         # 添加定时任务：每 5 分钟执行一次
@@ -154,9 +278,19 @@ class BlogScheduler:
             name='每 5 分钟文章爬取'
         )
         
+        # 添加翻译任务：每 10 分钟执行一次，初始延迟 5 分钟
+        from apscheduler.triggers.interval import IntervalTrigger
+        self.scheduler.add_job(
+            self.translate_existing_articles,
+            IntervalTrigger(minutes=10),
+            id='translate_existing_articles',
+            name='每 10 分钟翻译未翻译文章',
+            next_run_time=datetime.now() + timedelta(minutes=5)  # 初始延迟 5 分钟
+        )
+        
         self.scheduler.start()
         self.is_running = True
-        print(f"调度器已启动，每 5 分钟执行一次")
+        print(f"调度器已启动：爬取任务每 5 分钟执行，翻译任务每 10 分钟执行")
     
     def stop(self):
         """停止调度器"""

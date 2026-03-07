@@ -41,25 +41,25 @@ class AnthropicScraper:
         
         articles = []
         
-        # 从 Markdown 内容中提取链接
-        # Jina Reader 返回的格式：[标题](https://www.anthropic.com/engineering/xxx)
-        pattern = r'\[([^\]]+)\]\(https://www\.anthropic\.com/engineering/([^/\s\)]+)\)'
+        # Jina Reader 返回的格式：
+        # [![Image 2: ...](...) ### 标题文本 Feb 05, 2026](https://www.anthropic.com/engineering/slug)
+        # 使用正则提取：### 标题 日期](URL)
+        pattern = r'###\s+([^(]+?)\s+\w+ \d{1,2}, \d{4}\]\((https://www\.anthropic\.com/engineering/[^)\s]+)\)'
         
         for match in re.finditer(pattern, content):
             title = match.group(1).strip()
-            slug = match.group(2)
+            url_match = match.group(2)
             
-            # 跳过首页链接
-            if not slug or slug == 'engineering':
-                continue
+            # 清理标题
+            title = re.sub(r'\s+', ' ', title).strip()
             
-            # 清理标题（去除 Image、Featured 等前缀）
-            if title.startswith('Image ') or 'Featured' in title:
+            # 跳过空标题
+            if not title or len(title) < 5:
                 continue
             
             articles.append({
                 "title": title,
-                "url": f"{self.base_url}/engineering/{slug}",
+                "url": url_match,
                 "source": "engineering",
                 "published_date": None
             })
@@ -72,6 +72,7 @@ class AnthropicScraper:
                 seen.add(a['url'])
                 unique.append(a)
         
+        print(f"Engineering: 提取到 {len(unique)} 篇文章")
         return unique[:15]  # 最多 15 篇
     
     async def scrape_news(self) -> List[Dict]:
@@ -186,8 +187,8 @@ class AnthropicScraper:
             print(f"  ✗ 获取文章元数据失败：{e}")
             return None
     
-    async def scrape_one_engineering_article_by_date(self, last_check: datetime) -> Optional[Dict]:
-        """只抓取一篇 Engineering 新文章（基于时间戳）"""
+    async def scrape_one_engineering_article_by_date(self, last_check: datetime, existing_urls: set) -> Optional[Dict]:
+        """只抓取一篇 Engineering 新文章（基于时间戳 + URL 去重）"""
         print("=" * 60)
         print("开始抓取 Engineering 文章...")
         print("=" * 60)
@@ -196,6 +197,11 @@ class AnthropicScraper:
         eng_articles = await self.scrape_engineering()
         
         for article in eng_articles:
+            # 首先检查 URL 是否已存在（快速跳过）
+            if article['url'] in existing_urls:
+                print(f"⏭️  跳过已存在：{article['title'][:50]}...")
+                continue
+            
             # 获取文章元数据（包括发布时间）
             metadata = await self.scrape_article_metadata(article['url'])
             
