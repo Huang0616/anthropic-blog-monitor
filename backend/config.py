@@ -1,11 +1,16 @@
-import os
 import json
 from pathlib import Path
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=str(Path(__file__).resolve().parent.parent / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
+
     # 数据库配置
     POSTGRES_USER: str = "anthropic_blog"
     POSTGRES_PASSWORD: str = "anthropic_blog_pass"

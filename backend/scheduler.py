@@ -170,13 +170,18 @@ class BlogScheduler:
                 # 推送通知
                 if summary and self.notifier.webhook_url:
                     print(f"📤 发送飞书推送...")
-                    await self.notifier.send_article_notification(
+                    notify_success = await self.notifier.send_article_notification(
                         title=new_article.title,
                         summary=summary,
                         url=new_article.url,
                         translation=translation
                     )
-                    new_article.notified = True
+                    if notify_success:
+                        new_article.notified = True
+                        print("✅ 飞书推送成功，已标记 notified=True")
+                    else:
+                        new_article.notified = False
+                        print("❌ 飞书推送失败，保留 notified=False")
                 elif summary and not self.notifier.webhook_url:
                     print(f"⚠️  跳过推送（未配置 Webhook）")
                 

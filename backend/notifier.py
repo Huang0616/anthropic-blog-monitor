@@ -9,6 +9,23 @@ class FeishuNotifier:
     
     def __init__(self):
         self.webhook_url = settings.FEISHU_WEBHOOK
+
+    def _is_success_response(self, response: httpx.Response) -> bool:
+        """校验飞书 webhook 返回值，避免把业务失败误判为成功。"""
+        try:
+            payload = response.json()
+        except ValueError:
+            print(f"推送失败：飞书返回了非 JSON 响应，status={response.status_code}")
+            return False
+
+        status_code = payload.get("StatusCode")
+        code = payload.get("code")
+
+        if status_code not in (None, 0) or code not in (None, 0):
+            print(f"推送失败：飞书返回错误，status={response.status_code} body={payload}")
+            return False
+
+        return True
     
     async def send_article_notification(self, title: str, summary: str, url: str, translation: Optional[Dict[str, str]] = None) -> bool:
         """
@@ -122,6 +139,8 @@ class FeishuNotifier:
                     headers={"Content-Type": "application/json"}
                 )
                 response.raise_for_status()
+                if not self._is_success_response(response):
+                    return False
                 print(f"推送成功：{title}")
                 return True
         except Exception as e:
@@ -190,6 +209,8 @@ class FeishuNotifier:
                     headers={"Content-Type": "application/json"}
                 )
                 response.raise_for_status()
+                if not self._is_success_response(response):
+                    return False
                 print(f"状态报告推送成功")
                 return True
         except Exception as e:
